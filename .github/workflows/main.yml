@@ -17,6 +17,9 @@ jobs:
     strategy:
       matrix:
         include:
+          #BetterAltay - legacy pthreads API, legacy chunkutils and the NetherNet WebRTC transport
+          - pm-version-major: 3
+            php-version-base: "8.1"
           - pm-version-major: 5
             php-version-base: "8.1"
           - pm-version-major: 5

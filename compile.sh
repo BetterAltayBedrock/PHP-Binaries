@@ -37,6 +37,12 @@ EXT_XXHASH_VERSION="0.2.0"
 EXT_ARRAYDEBUG_VERSION="0.2.1"
 EXT_ENCODING_VERSION="1.0.0"
 
+#PocketMine-MP <5 (BetterAltay) builds
+EXT_PTHREADS_VERSION="4.2.1" #pmmp/ext-pmmpthread tag - last one exposing the legacy pthreads API (Threaded/Thread in the root namespace)
+EXT_POCKETMINE_CHUNKUTILS_VERSION="0.1.0" #pmmp/PocketMine-C-ChunkUtils - legacy native Anvil chunk utils, removed from the build in f0d9e208
+EXT_WEBRTC_VERSION="2858b33fee03e90a71ad2a294264b642db48a13e" #axolotl-pm/ext-webrtc master - release not tagged
+LIBDATACHANNEL_VERSION="0.24.5" #git tags of libdatachannel carry a "v" prefix, see build_libdatachannel
+
 EXT_IGBINARY_VERSION_PHP85="3.2.17RC1"
 
 function write_out {
@@ -264,6 +270,9 @@ function php_version_id {
 
 PREFERRED_PHP_VERSION_BASE=""
 case $PM_VERSION_MAJOR in
+	3)
+		PREFERRED_PHP_VERSION_BASE="8.1"
+		;;
 	5)
 		PREFERRED_PHP_VERSION_BASE="8.2"
 		;;
@@ -1065,6 +1074,44 @@ function build_libdeflate {
 	write_done
 }
 
+function build_libdatachannel {
+	write_library libdatachannel "$LIBDATACHANNEL_VERSION"
+	local libdatachannel_dir="./libdatachannel"
+
+	if [ "$DO_STATIC" == "yes" ]; then
+		local CMAKE_LIBDATACHANNEL_EXTRA_FLAGS="-DBUILD_SHARED_LIBS=OFF"
+	else
+		local CMAKE_LIBDATACHANNEL_EXTRA_FLAGS="-DBUILD_SHARED_LIBS=ON"
+	fi
+
+	if cant_use_cache "$libdatachannel_dir"; then
+		rm -rf "$libdatachannel_dir"
+		write_download
+		#cloned instead of downloaded as a tarball because libdatachannel builds its dependencies from git submodules
+		git clone --recursive --branch "v$LIBDATACHANNEL_VERSION" https://github.com/paullouisageneau/libdatachannel.git "$libdatachannel_dir" >> "$DIR/install.log" 2>&1
+		cd "$libdatachannel_dir"
+		write_configure
+		cmake . \
+			-DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
+			-DCMAKE_PREFIX_PATH="$INSTALL_DIR" \
+			-DCMAKE_INSTALL_LIBDIR=lib \
+			$CMAKE_GLOBAL_EXTRA_FLAGS \
+			$CMAKE_LIBDATACHANNEL_EXTRA_FLAGS \
+			-DNO_MEDIA=ON \
+			-DNO_EXAMPLES=ON \
+			-DNO_TESTS=ON >> "$DIR/install.log" 2>&1
+		write_compile
+		make -j $THREADS >> "$DIR/install.log" 2>&1 && mark_cache
+	else
+		write_caching
+		cd "$libdatachannel_dir"
+	fi
+	write_install
+	make install >> "$DIR/install.log" 2>&1
+	cd ..
+	write_done
+}
+
 cd "$LIB_BUILD_DIR"
 
 build_zlib
@@ -1087,6 +1134,11 @@ build_libxml2
 build_libzip
 build_sqlite3
 build_libdeflate
+
+if [ "$PM_VERSION_MAJOR" -lt 5 ]; then
+	#ext-webrtc (NetherNet) links against libdatachannel
+	build_libdatachannel
+fi
 
 # PECL libraries
 
@@ -1119,7 +1171,16 @@ function get_pecl_extension {
 cd "$BUILD_DIR/php"
 write_out "PHP" "Downloading additional extensions..."
 
-get_github_extension "pmmpthread" "$EXT_PMMPTHREAD_VERSION" "pmmp" "ext-pmmpthread"
+if [ "$PM_VERSION_MAJOR" -lt 5 ]; then
+	#PM<5 (BetterAltay): the legacy pthreads API (Threaded/Thread in the root namespace) instead of pmmpthread
+	get_github_extension "pthreads" "$EXT_PTHREADS_VERSION" "pmmp" "ext-pmmpthread"
+	#restores the legacy PocketMine-C-ChunkUtils extension (native Anvil chunk utils) removed in f0d9e208
+	get_github_extension "legacy-chunkutils" "$EXT_POCKETMINE_CHUNKUTILS_VERSION" "pmmp" "PocketMine-C-ChunkUtils"
+	#WebRTC DataChannel extension for NetherNet (axolotl-pm/nethernet)
+	get_github_extension "webrtc" "$EXT_WEBRTC_VERSION" "axolotl-pm" "ext-webrtc"
+else
+	get_github_extension "pmmpthread" "$EXT_PMMPTHREAD_VERSION" "pmmp" "ext-pmmpthread"
+fi
 
 
 get_github_extension "yaml" "$EXT_YAML_VERSION" "php" "pecl-file_formats-yaml"
@@ -1256,6 +1317,13 @@ if [ "$FSANITIZE_OPTIONS" != "" ]; then
 	LDFLAGS="-fsanitize=$FSANITIZE_OPTIONS $LDFLAGS"
 fi
 
+if [ "$PM_VERSION_MAJOR" -lt 5 ]; then
+	#PM<5 (BetterAltay) builds the legacy pthreads API, NetherNet's WebRTC transport and the old chunk utils
+	THREAD_EXT_FLAGS=("--enable-pthreads" "--enable-pocketmine-chunkutils" "--enable-webrtc" "--with-libdatachannel=$INSTALL_DIR")
+else
+	THREAD_EXT_FLAGS=("--enable-pmmpthread")
+fi
+
 RANLIB=$RANLIB CFLAGS="$CFLAGS $FLAGS_LTO" CXXFLAGS="$CXXFLAGS $FLAGS_LTO" LDFLAGS="$LDFLAGS $FLAGS_LTO" ./configure $PHP_OPTIMIZATION --prefix="$INSTALL_DIR" \
 --exec-prefix="$INSTALL_DIR" \
 --with-curl \
@@ -1276,7 +1344,7 @@ $HAS_DEBUG \
 --enable-mbstring \
 --disable-mbregex \
 --enable-calendar \
---enable-pmmpthread \
+"${THREAD_EXT_FLAGS[@]}" \
 --enable-fileinfo \
 --with-libxml \
 --enable-xml \

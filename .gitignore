@@ -3,5 +3,7 @@ install_data/
 install.log
 temp_data/
 compile.log
+build-console.log
+download_cache/
 /*.zip
 /*.exe

@@ -28,6 +28,11 @@ $PHP_XDEBUG_VER="3.5.0"
 $PHP_ARRAYDEBUG_VER="0.2.1"
 $PHP_ENCODING_VER="1.0.0"
 
+$PHP_PTHREADS_VER="4.2.1" #pmmp/ext-pmmpthread tag - legacy pthreads API (Threaded/Thread in root namespace) for PM<5
+$PHP_LEGACY_CHUNKUTILS_VER="0.1.0"
+$PHP_WEBRTC_VER="2858b33fee03e90a71ad2a294264b642db48a13e" #axolotl-pm/ext-webrtc master - release not tagged
+$LIBDATACHANNEL_VER="0.24.5" #git tag has a "v" prefix, see build-libdatachannel
+
 $PHP_IGBINARY_VER_PHP85="3.2.17RC1"
 
 function pm-echo {
@@ -151,6 +156,7 @@ function php-version-id {
 
 $PREFERRED_PHP_VERSION_BASE=""
 switch ($env:PM_VERSION_MAJOR) {
+    3 { $PREFERRED_PHP_VERSION_BASE="8.1" }
     5 { $PREFERRED_PHP_VERSION_BASE="8.2" }
     $null { pm-fatal-error "Please specify PocketMine-MP major version by setting the PM_VERSION_MAJOR environment variable" }
     default { pm-fatal-error "PocketMine-MP $PM_VERSION_MAJOR is not supported by this version of the build script" }
@@ -189,15 +195,25 @@ $SDL_TOOLSET_FLAG=""
 $CMAKE_TOOLSET_FLAG=""
 
 $PHP_VERSION_ID = php-version-id $PHP_VER
-if ($PHP_VERSION_ID -ge 80400) {
+if ($PHP_VERSION_ID -ge 80400 -or $env:PHP_USE_VS17 -eq 1) {
     $VC_VER="vs17"
     $SDK_TOOLSET_FLAG=""
     $CMAKE_TOOLSET_FLAG=""
+    if ($PHP_VERSION_ID -lt 80400) {
+        pm-echo "[WARNING] Building PHP < 8.4 with vs17 (MSVC v143) because PHP_USE_VS17 is set"
+        pm-echo "[WARNING] The binaries will be ABI-incompatible with community prebuilt extensions (fine if every extension is built by this script)"
+    }
 } else {
     #technically it's fine to build <8.4 with vs17, but this would make the binaries ABI-incompatible with community prebuilt extensions
     $VC_VER="vs16"
     $SDK_TOOLSET_FLAG="-s=14.29"
     $CMAKE_TOOLSET_FLAG="-T v142"
+}
+
+$DEPS_SERIES=$VC_VER
+if ($env:PHP_USE_VS17 -eq 1 -and $PHP_VERSION_ID -lt 80400) {
+    #the deps server only publishes vs16 package indexes for old branches; vs16-built libs are ABI-compatible with v143 output (same MSVC 14.x ABI)
+    $DEPS_SERIES="vs16"
 }
 
 pm-echo "Selected PHP $PHP_VER ($PHP_VERSION_ID), SDK target $VC_VER ($SDK_TOOLSET_FLAG), CMake target $CMAKE_TARGET ($CMAKE_TOOLSET_FLAG)"
@@ -310,7 +326,7 @@ function download-sdk {
 function sdk-command {
     param ([string] $command, [string] $errorMessage = "")
 
-    New-Item task.bat -Value $command >> $log_file 2>&1
+    New-Item task.bat -Force -Value $command >> $log_file 2>&1
     echo "Running SDK command: $command" >> $log_file
     $wrap = "`"$PHP_SDK_PATH\phpsdk-starter.bat`" -c $VC_VER -a $ARCH $SDK_TOOLSET_FLAG -t task.bat 2>&1"
     echo "SDK wrapper command: $wrap" >> $log_file
@@ -327,9 +343,14 @@ function sdk-command {
 }
 
 function download-php-deps {
-    write-library "PHP prebuilt deps" "$PHP_VERSION_BASE/$VC_VER"
+    write-library "PHP prebuilt deps" "$PHP_VERSION_BASE/$DEPS_SERIES"
     write-download
-    sdk-command "phpsdk_deps -u -t $VC_VER -b $PHP_VERSION_BASE -a $ARCH -d $DEPS_DIR || exit 1"
+    $deps_force_arg = ""
+    if ($DEPS_SERIES -ne $VC_VER) {
+        #-f bypasses the sanity check that the active toolset CRT matches the deps series (vs16 deps are ABI-compatible with vs17 output)
+        $deps_force_arg = "-f "
+    }
+    sdk-command "phpsdk_deps -u $deps_force_arg-t $DEPS_SERIES -b $PHP_VERSION_BASE -a $ARCH -d $DEPS_DIR || exit 1"
     write-done
 }
 
@@ -436,6 +457,34 @@ function build-libdeflate {
     Pop-Location
 }
 
+function build-libdatachannel {
+    write-library "libdatachannel" $LIBDATACHANNEL_VER
+    write-download
+    #git clone instead of zip download because libdatachannel needs its git submodules (plog, usrsctp, libjuice)
+    (& cmd.exe /c "git clone --recursive --branch v$LIBDATACHANNEL_VER https://github.com/paullouisageneau/libdatachannel.git libdatachannel 2>&1") >> $log_file
+    if (!(Test-Path "libdatachannel\CMakeLists.txt")) {
+        pm-fatal-error "Failed to clone libdatachannel"
+    }
+    Push-Location libdatachannel
+
+    write-configure
+    sdk-command "cmake -G `"$CMAKE_TARGET`" $CMAKE_TOOLSET_FLAG^`
+        -DCMAKE_PREFIX_PATH=`"$DEPS_DIR`"^`
+        -DCMAKE_INSTALL_PREFIX=`"$DEPS_DIR`"^`
+        -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL^`
+        -DBUILD_SHARED_LIBS=ON^`
+        -DNO_MEDIA=ON^`
+        -DNO_EXAMPLES=ON^`
+        -DNO_TESTS=ON^`
+        `"$pwd`" || exit 1"
+    write-compile
+    sdk-command "msbuild ALL_BUILD.vcxproj /p:Configuration=$MSBUILD_CONFIGURATION /m || exit 1"
+    write-install
+    sdk-command "msbuild INSTALL.vcxproj /p:Configuration=$MSBUILD_CONFIGURATION /m || exit 1"
+    write-done
+    Pop-Location
+}
+
 function download-php {
     write-library "PHP" $PHP_VER
     write-download
@@ -465,7 +514,16 @@ function get-github-extension {
 
 function download-php-extensions {
     Push-Location "$SOURCES_PATH\ext" >> $log_file 2>&1
-    get-github-extension "pmmpthread" $PHP_PMMPTHREAD_VER "pmmp" "ext-pmmpthread"
+    if ([int]$PM_VERSION_MAJOR -lt 5) {
+        #PM<5 (BetterAltay): legacy pthreads API (Threaded/Thread/Worker in the root namespace) instead of pmmpthread
+        get-github-extension "pthreads" $PHP_PTHREADS_VER "pmmp" "ext-pmmpthread"
+        #restores the legacy PocketMine-C-ChunkUtils extension dropped in f0d9e208 (native Anvil chunk utils)
+        get-github-extension "legacy-chunkutils" $PHP_LEGACY_CHUNKUTILS_VER "pmmp" "PocketMine-C-ChunkUtils"
+        #WebRTC DataChannel extension for NetherNet (axolotl-pm/nethernet)
+        get-github-extension "webrtc" $PHP_WEBRTC_VER "axolotl-pm" "ext-webrtc"
+    } else {
+        get-github-extension "pmmpthread" $PHP_PMMPTHREAD_VER "pmmp" "ext-pmmpthread"
+    }
     get-github-extension "yaml"                  $PHP_YAML_VER                  "php"      "pecl-file_formats-yaml"
     get-github-extension "chunkutils2"           $PHP_CHUNKUTILS2_VER           "pmmp"     "ext-chunkutils2"
     get-github-extension "igbinary"              $PHP_IGBINARY_VER              "igbinary" "igbinary"
@@ -510,6 +568,10 @@ build-yaml
 #these two both need zlib from the standard deps
 build-leveldb
 build-libdeflate
+if ([int]$PM_VERSION_MAJOR -lt 5) {
+    #libdatachannel is required by ext-webrtc (NetherNet)
+    build-libdatachannel
+}
 
 cd $BASE_PATH >> $log_file 2>&1
 
@@ -521,6 +583,18 @@ write-library "PHP" $PHP_VER
 write-configure
 
 sdk-command "buildconf.bat"
+
+$thread_ext_args=""
+if ([int]$PM_VERSION_MAJOR -lt 5) {
+    $thread_ext_args="    --with-pthreads=shared^`
+    --enable-pocketmine-chunkutils^`
+    --enable-webrtc=shared^`
+    --with-libdatachannel=`"$DEPS_DIR`""
+} else {
+    $thread_ext_args="    --with-pmmpthread=shared^`
+    --with-pmmpthread-sockets"
+}
+
 sdk-command "configure^`
     --with-mp=auto^`
     --with-prefix=pocketmine-php-bin^`
@@ -570,8 +644,7 @@ sdk-command "configure^`
     --with-mysqlnd^`
     --with-openssl^`
     --with-pcre-jit^`
-    --with-pmmpthread=shared^`
-    --with-pmmpthread-sockets^`
+$thread_ext_args^`
     --with-simplexml^`
     --with-sodium^`
     --with-sqlite3=shared^`
@@ -602,6 +675,17 @@ Remove-Item -Recurse bin -ErrorAction Continue >> $log_file 2>&1
 mkdir bin >> $log_file 2>&1
 Move-Item "$SOURCES_PATH\$ARCH\$($OUT_PATH_REL)_TS\php-$PHP_DISPLAY_VER" bin\php
 
+if ([int]$PM_VERSION_MAJOR -lt 5) {
+    #runtime DLLs required next to php.exe: pthreads4w for ext-pthreads, libdatachannel for ext-webrtc
+    foreach ($runtime_dll in @("pthreadVC3.dll", "datachannel.dll")) {
+        $runtime_dll_path = Get-ChildItem -Recurse -Filter $runtime_dll "$DEPS_DIR" | Select-Object -First 1
+        if ($runtime_dll_path -eq $null) {
+            pm-fatal-error "$runtime_dll not found in $DEPS_DIR"
+        }
+        Copy-Item $runtime_dll_path.FullName "bin\php" >> $log_file 2>&1
+    }
+}
+
 $php_exe = "$outpath\bin\php\php.exe"
 
 if (!(Test-Path $php_exe)) {
@@ -619,7 +703,11 @@ append-file-utf8 "display_startup_errors=1" $php_ini
 append-file-utf8 "error_reporting=-1" $php_ini
 append-file-utf8 "zend.assertions=-1" $php_ini
 append-file-utf8 "extension_dir=ext" $php_ini
-append-file-utf8 "extension=php_pmmpthread.dll" $php_ini
+if ([int]$PM_VERSION_MAJOR -lt 5) {
+    append-file-utf8 "extension=php_pthreads.dll" $php_ini
+} else {
+    append-file-utf8 "extension=php_pmmpthread.dll" $php_ini
+}
 append-file-utf8 "extension=php_openssl.dll" $php_ini
 append-file-utf8 "extension=php_chunkutils2.dll" $php_ini
 append-file-utf8 "extension=php_igbinary.dll" $php_ini
@@ -627,6 +715,10 @@ append-file-utf8 "extension=php_leveldb.dll" $php_ini
 append-file-utf8 "extension=php_crypto.dll" $php_ini
 append-file-utf8 "extension=php_libdeflate.dll" $php_ini
 append-file-utf8 "extension=php_encoding.dll" $php_ini
+if ([int]$PM_VERSION_MAJOR -lt 5) {
+    #NetherNet (axolotl-pm/nethernet) WebRTC DataChannel support
+    append-file-utf8 "extension=php_webrtc.dll" $php_ini
+}
 append-file-utf8 "igbinary.compact_strings=0" $php_ini
 if ($PHP_VERSION_ID -lt 80500) {
     append-file-utf8 "zend_extension=php_opcache.dll" $php_ini
