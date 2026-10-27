@@ -1384,6 +1384,11 @@ $HAVE_MYSQLI \
 $HAVE_VALGRIND \
 $CONFIGURE_FLAGS >> "$DIR/install.log" 2>&1
 write_compile
+if [[ "$COMPILE_TARGET" == "mac"* ]]; then
+	#PHP_REQUIRE_CXX() (pulled in by the webrtc extension) unconditionally adds -lstdc++ to LIBS,
+	#but macOS has no libstdc++ since Xcode 10 - it only ships libc++
+	sed -i=".backup" 's/-lstdc++/-lc++/g' Makefile
+fi
 if [ "$COMPILE_FOR_ANDROID" == "yes" ]; then
 	sed -i=".backup" 's/-export-dynamic/-all-static/g' Makefile
 fi
