@@ -164,6 +164,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    if: false
     name: MacOS ${{ matrix.artifact-name }}
     runs-on: ${{ matrix.image }}
     strategy:
@@ -272,7 +273,7 @@ jobs:
 
   publish:
     name: Publish binaries
-    needs: [linux, macos, windows, android]
+    needs: [linux, windows, android]
     runs-on: ubuntu-22.04
     if: ${{ github.ref_name == 'stable' && github.ref_type == 'branch' && !contains(github.event.head_commit.message, '[no release]') }}
     concurrency: release-${{ inputs.php-version-base }}-pm${{ inputs.pm-version-major }}
