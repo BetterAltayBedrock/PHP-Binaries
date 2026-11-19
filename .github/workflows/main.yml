@@ -20,6 +20,9 @@ jobs:
           #BetterAltay - legacy pthreads API, legacy chunkutils and the NetherNet WebRTC transport
           - pm-version-major: 3
             php-version-base: "8.2"
+            update-pm-latest-tag: true
+          - pm-version-major: 3
+            php-version-base: "8.1"
 
     uses: ./.github/workflows/main-pm-matrix.yml
     with:
@@ -27,6 +30,7 @@ jobs:
       php-version-base: ${{ matrix.php-version-base }}
       special-release: ${{ matrix.special-release || 'none' }}
       pm-preview: ${{ matrix.pm-preview || false }}
+      update-pm-latest-tag: ${{ matrix.update-pm-latest-tag || false }}
     secrets: inherit
 
   publish-archive-release:
