@@ -19,7 +19,7 @@ jobs:
         include:
           #BetterAltay - legacy pthreads API, legacy chunkutils and the NetherNet WebRTC transport
           - pm-version-major: 3
-            php-version-base: "8.1"
+            php-version-base: "8.2"
 
     uses: ./.github/workflows/main-pm-matrix.yml
     with:
