@@ -94,6 +94,9 @@ function mark_cache {
 write_out "PocketMine" "PHP compiler for Linux, MacOS and Android"
 DIR="$(pwd)"
 BASE_BUILD_DIR="$DIR/install_data"
+if [ -n "$PHP_BUILD_WORKSPACE" ]; then
+	BASE_BUILD_DIR="$PHP_BUILD_WORKSPACE"
+fi
 #libtool and autoconf have a "feature" where it looks for install.sh/install-sh in ./ ../ and ../../
 #this extra subdir makes sure that it doesn't find anything it's not supposed to be looking for.
 BUILD_DIR="$BASE_BUILD_DIR/subdir"
