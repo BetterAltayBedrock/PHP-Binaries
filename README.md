@@ -19,6 +19,8 @@
 
 Bash script used to compile PHP on MacOS and Linux platforms. Make sure you have ``make autoconf automake libtool m4 wget getconf gzip bzip2 bison g++ git cmake pkg-config re2c ca-certificates``.
 
+Set ``PHP_BUILD_WORKSPACE`` to place temporary build sources outside the current directory, for example when building on a slow mounted filesystem. The final ``bin`` output remains in the current directory.
+
 ### Recommendations
 - If you're going to use the compiled binary only on the machine you're build it on, remove the `-t` option for best performance - this will allow the script to optimize for the current machine rather than a generic one.
 - [`ext-gd2`](https://www.php.net/manual/en/book.image.php) is NOT included unless the `-g` flag is provided, as PocketMine-MP doesn't need it. However, if your plugins need it, don't forget to enable it using `-g`.

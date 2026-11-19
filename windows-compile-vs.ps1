@@ -1,7 +1,7 @@
 ﻿$ErrorActionPreference="Stop"
 $ProgressPreference="SilentlyContinue"
 
-$PHP_VERSIONS=@("8.1.34", "8.2.30", "8.3.29", "8.4.16", "8.5.0")
+$PHP_VERSIONS=@("8.1.34", "8.2.35", "8.3.29", "8.4.16", "8.5.0")
 
 $PHP_SDK_VER="2.4.0"
 $ARCH="x64"
@@ -156,7 +156,7 @@ function php-version-id {
 
 $PREFERRED_PHP_VERSION_BASE=""
 switch ($env:PM_VERSION_MAJOR) {
-    3 { $PREFERRED_PHP_VERSION_BASE="8.1" }
+    3 { $PREFERRED_PHP_VERSION_BASE="8.2" } #PM<5 (BetterAltay)
     5 { $PREFERRED_PHP_VERSION_BASE="8.2" }
     $null { pm-fatal-error "Please specify PocketMine-MP major version by setting the PM_VERSION_MAJOR environment variable" }
     default { pm-fatal-error "PocketMine-MP $PM_VERSION_MAJOR is not supported by this version of the build script" }

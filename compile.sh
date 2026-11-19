@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-PHP_VERSIONS=("8.1.34" "8.2.30" "8.3.29" "8.4.16" "8.5.0")
+PHP_VERSIONS=("8.1.34" "8.2.35" "8.3.29" "8.4.16" "8.5.0")
 
 #### NOTE: Tags with "v" prefixes behave weirdly in the GitHub API. They'll be stripped in some places but not others.
 #### Use commit hashes to avoid this.
@@ -94,6 +94,9 @@ function mark_cache {
 write_out "PocketMine" "PHP compiler for Linux, MacOS and Android"
 DIR="$(pwd)"
 BASE_BUILD_DIR="$DIR/install_data"
+if [ -n "$PHP_BUILD_WORKSPACE" ]; then
+	BASE_BUILD_DIR="$PHP_BUILD_WORKSPACE"
+fi
 #libtool and autoconf have a "feature" where it looks for install.sh/install-sh in ./ ../ and ../../
 #this extra subdir makes sure that it doesn't find anything it's not supposed to be looking for.
 BUILD_DIR="$BASE_BUILD_DIR/subdir"
@@ -271,7 +274,8 @@ function php_version_id {
 PREFERRED_PHP_VERSION_BASE=""
 case $PM_VERSION_MAJOR in
 	3)
-		PREFERRED_PHP_VERSION_BASE="8.1"
+		#PM<5 (BetterAltay)
+		PREFERRED_PHP_VERSION_BASE="8.2"
 		;;
 	5)
 		PREFERRED_PHP_VERSION_BASE="8.2"
